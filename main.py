@@ -1,0 +1,100 @@
+"""
+Orquestador del pipeline: Impacto de la IA en el Empleo — Sector Tecnología (Grupo 1).
+
+No hace el trabajo pesado: llama a las funciones de cada módulo en orden
+y guarda los resultados. Ejecutar con:  python main.py
+"""
+
+import pandas as pd
+
+from src.analysis import calcular_estadisticas
+from src.clean_data import limpiar_dataframe
+from src.load_data import cargar_industria
+from src.audit import auditar_calidad, nulos_recuperables_por_formula, buscar_relaciones_exactas, asimetria_y_outliers, matriz_correlacion, comparar_salarios_sin_el_otro
+from src.bitacora import reiniciar_bitacora, obtener_bitacora
+
+from src.utils import (
+    RUTA_DATOS_CRUDOS,
+    INDUSTRIA,
+    RUTA_DATOS_LIMPIOS,
+    SECTOR_ASIGNADO,
+    guardar_tabla,
+)
+
+from src.visualization import generar_reporte
+
+
+def guardar_resultados(resultados):
+    """Guarda en outputs/tablas cada resultado del análisis que sea un DataFrame o dict."""
+    for nombre, valor in resultados.items():
+        if isinstance(valor, dict):
+            valor = pd.DataFrame([valor])
+        if isinstance(valor, pd.DataFrame):
+            guardar_tabla(valor.round(4), f"{nombre}.csv")
+
+def imprimir_resumen(df_crudo, df_limpio, resultados):
+    """Muestra por consola los números clave del pipeline."""
+    print(f"\nRegistros de {SECTOR_ASIGNADO}: crudos {len(df_crudo):,} | limpios {len(df_limpio):,}")
+    print(f"Top 3 puestos con mayor riesgo: {', '.join(resultados['top_puestos_riesgo'])}")
+    print("\nDistribución salarial:\n", resultados["distribucion_salarial"].round(2).to_string(index=False))
+    print("\nResiliencia por puesto:\n", resultados["resiliencia_puestos"].round(2).to_string(index=False))
+
+
+# S auditamos y guardamos la informacion relevante en csv
+def guardar_auditoria(df_industria):
+    """Calcula las tablas de la auditoría, muestra la principal por consola y las guarda en outputs/tablas."""
+    # calculo cada tabla, en el orden de las partes de audit.py
+    hallazgos = auditar_calidad(df_industria, INDUSTRIA)
+    correlacion = matriz_correlacion(df_industria).rename_axis("columna").reset_index()
+    relaciones = buscar_relaciones_exactas(df_industria)
+    recuperables = nulos_recuperables_por_formula(df_industria)
+    salario_sin_otro = comparar_salarios_sin_el_otro(df_industria)
+    outliers = asimetria_y_outliers(df_industria).reset_index(names="columna")
+
+    guardar_tabla(hallazgos, "00_auditoria_calidad.csv")
+    guardar_tabla(correlacion, "01_matriz_correlacion.csv")
+    guardar_tabla(relaciones, "02_relaciones_exactas.csv")
+    guardar_tabla(recuperables, "03_nulos_recuperables.csv")
+    guardar_tabla(salario_sin_otro, "04_salarios_sin_el_otro.csv")
+    guardar_tabla(outliers, "05_asimetria_outliers.csv")
+
+
+def main():
+    # limpio la bitacora al ejecutar(obligarorio)
+    reiniciar_bitacora()
+    
+
+    # FASE I : cargo y filtro el dataset
+    df_industria = cargar_industria(RUTA_DATOS_CRUDOS, INDUSTRIA)
+   
+    # audito el df  y guardo resultados en archivos csv 
+    guardar_auditoria(df_industria)
+    
+    # limpiamos el dataset teniendo en cuenta las conclusiones de la auditación
+    df_limpio = limpiar_dataframe(df_industria)
+    
+    # garantizo que la carpeta destino exista
+    RUTA_DATOS_LIMPIOS.parent.mkdir(parents=True, exist_ok=True)
+    # guardamos el csv en data/processed/
+    df_limpio.to_csv(RUTA_DATOS_LIMPIOS, index=False, encoding="utf-8-sig")
+    
+   
+   
+    # FASE II: Analisis del sector asignado.
+
+# obtengo un diccionario con cada resultado
+    resultados = calcular_estadisticas(df_limpio)
+    guardar_resultados(resultados)
+
+    # FASE III: Visualizacion
+    generar_reporte(df_limpio, resultados)
+
+    #guardo la informacion de la bitacora hasta el momento(mover al final de fase 3, cuando ya haya sido revisada)
+    guardar_tabla(obtener_bitacora(), "00_bitacora_saneamiento.csv")
+
+    imprimir_resumen(df_industria, df_limpio,  resultados)
+    print("\n✅ Pipeline completado exitosamente. Resultados en outputs/ y data/processed/.")
+
+
+if __name__ == "__main__":
+    main()
